@@ -114,6 +114,9 @@ enum CommandProcess {
         else { throw TranscriptionCommandError("could not configure command process isolation") }
 
         let strings = [executable.path] + arguments
+        guard !strings.contains(where: { $0.contains("\0") }) else {
+            throw TranscriptionCommandError("command executable and arguments cannot contain NUL characters")
+        }
         var argv: [UnsafeMutablePointer<CChar>?] = strings.map { strdup($0) }
         guard argv.allSatisfy({ $0 != nil }) else {
             argv.compactMap { $0 }.forEach { free($0) }

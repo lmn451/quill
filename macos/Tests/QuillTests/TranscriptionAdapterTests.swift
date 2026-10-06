@@ -96,6 +96,27 @@ final class TranscriptionAdapterTests: XCTestCase {
         XCTAssertEqual(String(decoding: output, as: UTF8.self), "--input=\(source.path)\n\(model)\nliteral;echo nope\n")
     }
 
+    func testNULInLiteralArgumentOrExpandedModelIsRejectedBeforeSpawn() throws {
+        let source = root.appendingPathComponent("input.wav")
+        for (suffix, model, arguments): (String, String, [String]) in [
+            ("literal", "ordinary model", ["{audio}", "literal\0tail"]),
+            ("model", "model\0tail", ["{audio}", "{model}"]),
+        ] {
+            let marker = root.appendingPathComponent("\(suffix)-launched")
+            let executable = try script("touch '\(marker.path)'; echo '{\"text\":\"launched\"}'")
+            let adapter = try adapter(
+                executable: executable,
+                extra: ["model": model, "arguments": arguments]
+            )
+            XCTAssertThrowsError(
+                try CommandProcess.run(executable: executable, arguments: adapter.arguments(for: source), timeout: 5)
+            ) { error in
+                XCTAssertTrue(String(describing: error).contains("NUL"))
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+        }
+    }
+
     func testLargeStdoutAndStderrCannotFillAPipeAndDeadlock() throws {
         let executable = try script(
             """
