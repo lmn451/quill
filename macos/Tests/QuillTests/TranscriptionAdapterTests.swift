@@ -3,6 +3,43 @@ import XCTest
 
 @testable import quill
 
+private struct InjectedRuntimeFailure: Error {}
+
+private actor InjectedTranscriptionEngine: TranscriptionEngine {
+    enum Failure: Sendable {
+        case runtime(String)
+        case unreadable(String)
+    }
+
+    nonisolated let name = "injected"
+    nonisolated let model = "test-model"
+    private let failure: Failure
+    private var files = [String]()
+
+    init(failure: Failure) {
+        self.failure = failure
+    }
+
+    func prepare() async throws {}
+
+    func transcribe(_ audio: URL) async throws -> [TranscriptSegment] {
+        let file = audio.lastPathComponent
+        files.append(file)
+        switch failure {
+        case .runtime(let failingFile) where file == failingFile:
+            throw InjectedRuntimeFailure()
+        case .unreadable(let failingFile) where file == failingFile:
+            throw UnreadableTranscriptionInput(audio: audio, underlyingError: nil)
+        default:
+            return [TranscriptSegment(start: 0, end: 0.5, text: "recognized \(file)")]
+        }
+    }
+
+    func release() async {}
+
+    func transcribedFiles() -> [String] { files }
+}
+
 @MainActor
 final class TranscriptionAdapterTests: XCTestCase {
     private var root: URL!
@@ -280,13 +317,13 @@ final class TranscriptionAdapterTests: XCTestCase {
             XCTAssertEqual(chunks.count, 2)
             XCTAssertEqual(chunks.map(\.duration), [1, 1])
             XCTAssertThrowsError(try CommandAudio.chunks(from: root.appendingPathComponent("missing"), in: directory, maxDuration: 1)) {
-                XCTAssertTrue($0 is CommandAudio.AudioError)
+                XCTAssertTrue($0 is UnreadableTranscriptionInput)
             }
         }
         let empty = try audio(duration: 0)
         try CommandProcess.withTemporaryDirectory { directory in
             XCTAssertThrowsError(try CommandAudio.chunks(from: empty, in: directory, maxDuration: 1)) {
-                XCTAssertTrue($0 is CommandAudio.AudioError)
+                XCTAssertTrue($0 is UnreadableTranscriptionInput)
             }
         }
     }
@@ -298,7 +335,7 @@ final class TranscriptionAdapterTests: XCTestCase {
         XCTAssertThrowsError(
             try CommandAudio.chunks(from: source, in: blockedDirectory, maxDuration: 1)
         ) { error in
-            XCTAssertFalse(error is CommandAudio.AudioError)
+            XCTAssertFalse(error is UnreadableTranscriptionInput)
         }
     }
 
@@ -346,6 +383,44 @@ final class TranscriptionAdapterTests: XCTestCase {
             let path = try String(contentsOf: log, encoding: .utf8)
             XCTAssertFalse(FileManager.default.fileExists(atPath: URL(fileURLWithPath: path).deletingLastPathComponent().path))
         }
+    }
+
+    func testOpaqueEngineRuntimeFailureLeavesSessionPendingAfterEarlierSuccess() async throws {
+        let files = ["mic": "mic.caf", "system": "system.caf"]
+        for file in files.values { try Data("audio".utf8).write(to: root.appendingPathComponent(file)) }
+        try JSONSerialization.data(withJSONObject: ["files": files]).write(to: root.appendingPathComponent("meta.json"))
+        let engine = InjectedTranscriptionEngine(failure: .runtime("system.caf"))
+        let coordinator = TranscriptionCoordinator(engineFactory: { engine })
+
+        do {
+            try await coordinator.transcribe(root)
+            XCTFail("expected opaque engine failure")
+        } catch is InjectedRuntimeFailure {
+        }
+
+        let transcribedFiles = await engine.transcribedFiles()
+        XCTAssertEqual(transcribedFiles, ["mic.caf", "system.caf"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("transcript.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("transcript.md").path))
+    }
+
+    func testUnreadableEngineInputIsSkippedAndLaterInputCompletes() async throws {
+        let files = ["mic": "mic.caf", "system": "system.caf"]
+        for file in files.values { try Data("audio".utf8).write(to: root.appendingPathComponent(file)) }
+        try JSONSerialization.data(withJSONObject: ["files": files]).write(to: root.appendingPathComponent("meta.json"))
+        let engine = InjectedTranscriptionEngine(failure: .unreadable("mic.caf"))
+        let coordinator = TranscriptionCoordinator(engineFactory: { engine })
+
+        try await coordinator.transcribe(root)
+
+        let transcribedFiles = await engine.transcribedFiles()
+        XCTAssertEqual(transcribedFiles, ["mic.caf", "system.caf"])
+        let transcript = try JSONDecoder().decode(
+            Transcript.self,
+            from: Data(contentsOf: root.appendingPathComponent("transcript.json"))
+        )
+        XCTAssertEqual(transcript.segments.map(\.speaker), ["them"])
+        XCTAssertEqual(transcript.segments.map(\.text), ["recognized system.caf"])
     }
 
     func testProviderFailureLeavesSessionPendingAndRetryPreservesProvenance() async throws {

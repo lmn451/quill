@@ -23,7 +23,7 @@ actor CommandEngine: TranscriptionEngine {
         guard prepared else { throw TranscriptionCommandError("command engine used before prepare()") }
         do {
             return try transcribeChunks(audio)
-        } catch let error as CommandAudio.AudioError {
+        } catch let error as UnreadableTranscriptionInput {
             throw error
         } catch let error as TranscriptionCommandError {
             throw error

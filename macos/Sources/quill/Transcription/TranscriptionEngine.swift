@@ -20,3 +20,16 @@ protocol TranscriptionEngine: Sendable {
     func transcribe(_ audio: URL) async throws -> [TranscriptSegment]
     func release() async
 }
+
+struct UnreadableTranscriptionInput: Error, CustomStringConvertible {
+    let description: String
+
+    init(audio: URL, underlyingError: (any Error)? = nil) {
+        description = "unreadable or empty audio \(audio.lastPathComponent)"
+            + (underlyingError.map { ": \($0)" } ?? "")
+    }
+
+    init(description: String) {
+        self.description = description
+    }
+}

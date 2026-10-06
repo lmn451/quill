@@ -128,11 +128,7 @@ actor TranscriptionCoordinator {
             let segments: [TranscriptSegment]
             do {
                 segments = try await engine.transcribe(audio)
-            } catch let error as TranscriptionCommandError {
-                // Provider failures are not corrupt audio. Leave the session
-                // pending instead of publishing an empty/partial completion.
-                throw error
-            } catch {
+            } catch let error as UnreadableTranscriptionInput {
                 log(dir, "skipping \(input.file): \(error)")
                 continue
             }

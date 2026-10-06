@@ -10,10 +10,6 @@ enum CommandAudio {
         let duration: TimeInterval
     }
 
-    struct AudioError: Error, CustomStringConvertible {
-        let description: String
-    }
-
     private final class Input: @unchecked Sendable {
         let file: AVAudioFile
         let buffer: AVAudioPCMBuffer
@@ -30,19 +26,19 @@ enum CommandAudio {
         do {
             file = try AVAudioFile(forReading: audio)
         } catch {
-            throw AudioError(description: "can't read \(audio.lastPathComponent): \(error)")
+            throw UnreadableTranscriptionInput(description: "can't read \(audio.lastPathComponent): \(error)")
         }
         return try convert(file, source: audio, in: directory, maxDuration: maxDuration)
     }
 
     private static func convert(_ file: AVAudioFile, source audio: URL, in directory: URL, maxDuration: TimeInterval) throws -> [Chunk] {
-        guard file.length > 0 else { throw AudioError(description: "empty audio") }
+        guard file.length > 0 else { throw UnreadableTranscriptionInput(description: "empty audio") }
         guard maxDuration.isFinite, (1...300).contains(maxDuration) else {
             throw TranscriptionCommandError("invalid command chunk duration")
         }
         guard let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true),
             let converter = AVAudioConverter(from: file.processingFormat, to: format)
-        else { throw AudioError(description: "unsupported audio format in \(audio.lastPathComponent)") }
+        else { throw UnreadableTranscriptionInput(description: "unsupported audio format in \(audio.lastPathComponent)") }
         guard let inputBuffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4096) else {
             throw TranscriptionCommandError("can't allocate audio conversion buffer")
         }
@@ -92,7 +88,7 @@ enum CommandAudio {
                 }
             }
             if let error = input.error {
-                throw AudioError(description: "can't read \(audio.lastPathComponent): \(error)")
+                throw UnreadableTranscriptionInput(description: "can't read \(audio.lastPathComponent): \(error)")
             }
             if let conversionError { throw conversionError }
             guard status != .error else { throw TranscriptionCommandError("audio converter failed") }
@@ -111,7 +107,7 @@ enum CommandAudio {
             guard buffer.frameLength > 0 else { throw TranscriptionCommandError("audio converter made no progress") }
         }
         finishChunk()
-        guard !chunks.isEmpty else { throw AudioError(description: "audio has no decodable frames") }
+        guard !chunks.isEmpty else { throw UnreadableTranscriptionInput(description: "audio has no decodable frames") }
         return chunks
     }
 }
