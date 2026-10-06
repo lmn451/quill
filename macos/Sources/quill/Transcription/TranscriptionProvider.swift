@@ -7,7 +7,8 @@ enum TranscriptionProvider {
     case parakeet
     case command(any TranscriptionCommandAdapter)
 
-    init(configuration: [String: Any] = Config.transcription() ?? [:]) throws {
+    init(configuration: [String: Any]? = nil) throws {
+        let configuration = try configuration ?? Config.transcription() ?? [:]
         let engine = configuration["engine"] ?? "parakeet"
         switch engine as? String {
         case "parakeet":

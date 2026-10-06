@@ -65,6 +65,12 @@ final class TranscriptionAdapterTests: XCTestCase {
         }
     }
 
+    func testMalformedTranscriptionSectionIsNotTreatedAsMissing() throws {
+        XCTAssertNil(try Config.transcription(in: [:]))
+        XCTAssertEqual(try Config.transcription(in: ["transcription": ["enabled": false]])?["enabled"] as? Bool, false)
+        XCTAssertThrowsError(try Config.transcription(in: ["transcription": "handy"]))
+    }
+
     func testInvalidCommandConfigurationFailsBeforeTranscribing() throws {
         let executable = try script("exit 0")
         for extra: [String: Any] in [
@@ -113,6 +119,51 @@ final class TranscriptionAdapterTests: XCTestCase {
             XCTAssertTrue(String(describing: error).contains("timed out"))
         }
         XCTAssertLessThan(Date().timeIntervalSince(start), 5)
+    }
+
+    func testTimeoutKillsWrapperAndChildProcess() throws {
+        let childPIDFile = root.appendingPathComponent("child.pid")
+        let wrapperPIDFile = root.appendingPathComponent("wrapper.pid")
+        let hanging = try script(
+            "echo $$ > '\(wrapperPIDFile.path)'\n" +
+                "/bin/sh -c 'trap \"\" TERM; while :; do :; done' &\n" +
+                "echo $! > '\(childPIDFile.path)'\n" +
+                "trap '' TERM\nwhile :; do :; done"
+        )
+        XCTAssertThrowsError(try CommandProcess.run(executable: hanging, arguments: [], timeout: 0.2))
+        let wrapperPID = try XCTUnwrap(Int32(String(contentsOf: wrapperPIDFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        let childPID = try XCTUnwrap(Int32(String(contentsOf: childPIDFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        XCTAssertFalse(processIsRunning(wrapperPID))
+        XCTAssertFalse(processIsRunning(childPID))
+    }
+
+    func testSegmentJustPastChunkBoundaryRemainsOrderedAndBounded() throws {
+        let adapter = try adapter(executable: script("exit 0"))
+        let decoded = try adapter.decode(
+            Data(#"{"segments":[{"start":1.04,"end":1.05,"text":"edge"}]}"#.utf8), duration: 1
+        )
+        XCTAssertEqual(decoded.count, 1)
+        XCTAssertEqual(decoded[0].start, 1)
+        XCTAssertEqual(decoded[0].end, 1)
+        XCTAssertLessThanOrEqual(decoded[0].start, decoded[0].end)
+    }
+
+    private func processIsRunning(_ processID: Int32) -> Bool {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-o", "stat=", "-p", String(processID)]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let state = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return process.terminationStatus == 0 && !state.isEmpty && !state.hasPrefix("Z")
+        } catch {
+            return false
+        }
     }
 
     func testJSONContractValidatesTimingsAndSupportsSilence() throws {

@@ -35,12 +35,20 @@ enum Config {
 
     /// Whether finished recordings are transcribed automatically. Default on.
     static func transcriptionEnabled() -> Bool {
-        transcription()?["enabled"] as? Bool ?? true
+        (try? transcription())?["enabled"] as? Bool ?? true
     }
 
     /// Read once when selecting a provider, so its engine and options agree.
-    static func transcription() -> [String: Any]? {
-        load()?["transcription"] as? [String: Any]
+    static func transcription() throws -> [String: Any]? {
+        try transcription(in: load())
+    }
+
+    static func transcription(in config: [String: Any]?) throws -> [String: Any]? {
+        guard let config, let value = config["transcription"] else { return nil }
+        guard let transcription = value as? [String: Any] else {
+            throw TranscriptionCommandError("transcription settings must be an object")
+        }
+        return transcription
     }
 
     /// Apple voice processing (acoustic echo cancellation) on the mic, so
