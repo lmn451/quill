@@ -250,9 +250,38 @@ final class TranscriptionAdapterTests: XCTestCase {
             throw XCTSkip("set QUILL_HANDY_TEST_AUDIO to opt in to the installed Handy smoke test")
         }
         let engine = try TranscriptionProvider(configuration: ["engine": "handy"]).makeEngine()
+        let readiness = try TranscriptionProvider(configuration: ["engine": "handy"]).checkReadiness()
+        guard case .ok = readiness.status else { return XCTFail("installed Handy should pass provider readiness") }
         try await engine.prepare()
         let segments = try await engine.transcribe(URL(fileURLWithPath: path))
         XCTAssertFalse(segments.isEmpty)
+        XCTAssertTrue(segments.map(\.text).joined(separator: " ").lowercased().contains("meeting"))
+        XCTAssertEqual(segments.first?.start, 0)
+        XCTAssertGreaterThan(segments.last?.end ?? 0, 1)
+        await engine.release()
+    }
+
+    /// Drives the user-configured adapter contract against an installed local
+    /// provider, rather than only a test command. Handy is used here because
+    /// its headless CLI implements the documented JSON response contract.
+    func testConfiguredCommandAdapterWithInstalledHandy() async throws {
+        guard let path = ProcessInfo.processInfo.environment["QUILL_HANDY_TEST_AUDIO"] else {
+            throw XCTSkip("set QUILL_HANDY_TEST_AUDIO to opt in to the installed Handy smoke test")
+        }
+        let model = HandyAdapter.defaultModel
+        let provider = try TranscriptionProvider(configuration: [
+            "engine": "command",
+            "command": [
+                "name": "handy-command",
+                "model": model,
+                "executable": "/Applications/Handy.app/Contents/MacOS/handy",
+                "arguments": ["--transcribe-file", "{audio}", "--model", "{model}", "--json"],
+            ],
+        ])
+        guard case .command(let adapter) = provider else { return XCTFail("expected configured command provider") }
+        let engine = CommandEngine(adapter: adapter)
+        try await engine.prepare()
+        let segments = try await engine.transcribe(URL(fileURLWithPath: path))
         XCTAssertTrue(segments.map(\.text).joined(separator: " ").lowercased().contains("meeting"))
         XCTAssertEqual(segments.first?.start, 0)
         XCTAssertGreaterThan(segments.last?.end ?? 0, 1)
