@@ -99,8 +99,9 @@ final class TranscriptionAdapterTests: XCTestCase {
     func testLargeStdoutAndStderrCannotFillAPipeAndDeadlock() throws {
         let executable = try script(
             """
-            /usr/bin/awk 'BEGIN { printf "{\\"text\\":\\""; for(i=0;i<200000;i++) printf "a"; print "\\"}" }'
-            /usr/bin/awk 'BEGIN { for(i=0;i<200000;i++) printf "e" }' >&2
+            /usr/bin/awk 'BEGIN { printf "{\\"text\\":\\""; for(i=0;i<200000;i++) printf "a"; print "\\"}" }' &
+            /usr/bin/awk 'BEGIN { for(i=0;i<200000;i++) printf "e" }' >&2 &
+            wait
             """)
         let adapter = try adapter(executable: executable)
         let output = try CommandProcess.run(executable: executable, arguments: [], timeout: 5)
@@ -130,7 +131,7 @@ final class TranscriptionAdapterTests: XCTestCase {
                 "echo $$ > '\(wrapperPIDFile.path)'\n" +
                     "/bin/sh -c 'trap \"\" TERM; while :; do :; done' &\n" +
                     "echo $! > '\(childPIDFile.path)'\n" +
-                    "exec /usr/bin/yes x\(redirection)"
+                    "exec /usr/bin/head -c 67108864 /dev/zero\(redirection)"
             )
             let start = Date()
             XCTAssertThrowsError(try CommandProcess.run(executable: producer, arguments: [], timeout: 30)) { error in
@@ -154,6 +155,25 @@ final class TranscriptionAdapterTests: XCTestCase {
                 "trap '' TERM\nwhile :; do :; done"
         )
         XCTAssertThrowsError(try CommandProcess.run(executable: hanging, arguments: [], timeout: 1))
+        let wrapperPID = try XCTUnwrap(Int32(String(contentsOf: wrapperPIDFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        let childPID = try XCTUnwrap(Int32(String(contentsOf: childPIDFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        XCTAssertFalse(processIsRunning(wrapperPID))
+        XCTAssertFalse(processIsRunning(childPID))
+    }
+
+    func testDeadlineCoversChildHoldingPipesAfterWrapperExit() throws {
+        let wrapperPIDFile = root.appendingPathComponent("exit-wrapper.pid")
+        let childPIDFile = root.appendingPathComponent("pipe-child.pid")
+        let wrapper = try script(
+            "echo $$ > '\(wrapperPIDFile.path)'\n" +
+                "/bin/sh -c 'trap \"\" TERM; while :; do :; done' &\n" +
+                "echo $! > '\(childPIDFile.path)'\nexit 0"
+        )
+        let start = Date()
+        XCTAssertThrowsError(try CommandProcess.run(executable: wrapper, arguments: [], timeout: 0.2)) { error in
+            XCTAssertTrue(String(describing: error).contains("timed out"))
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(start), 3)
         let wrapperPID = try XCTUnwrap(Int32(String(contentsOf: wrapperPIDFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
         let childPID = try XCTUnwrap(Int32(String(contentsOf: childPIDFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
         XCTAssertFalse(processIsRunning(wrapperPID))
