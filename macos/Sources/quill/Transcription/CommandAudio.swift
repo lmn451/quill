@@ -26,21 +26,26 @@ enum CommandAudio {
     }
 
     static func chunks(from audio: URL, in directory: URL, maxDuration: TimeInterval) throws -> [Chunk] {
+        let file: AVAudioFile
         do {
-            return try convert(audio, in: directory, maxDuration: maxDuration)
+            file = try AVAudioFile(forReading: audio)
         } catch {
-            throw AudioError(description: "can't convert \(audio.lastPathComponent) for transcription: \(error)")
+            throw AudioError(description: "can't read \(audio.lastPathComponent): \(error)")
         }
+        return try convert(file, source: audio, in: directory, maxDuration: maxDuration)
     }
 
-    private static func convert(_ audio: URL, in directory: URL, maxDuration: TimeInterval) throws -> [Chunk] {
-        let file = try AVAudioFile(forReading: audio)
+    private static func convert(_ file: AVAudioFile, source audio: URL, in directory: URL, maxDuration: TimeInterval) throws -> [Chunk] {
         guard file.length > 0 else { throw AudioError(description: "empty audio") }
-        guard maxDuration.isFinite, (1...300).contains(maxDuration),
-            let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true),
-            let converter = AVAudioConverter(from: file.processingFormat, to: format),
-            let inputBuffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4096)
-        else { throw AudioError(description: "unsupported audio format or chunk duration") }
+        guard maxDuration.isFinite, (1...300).contains(maxDuration) else {
+            throw TranscriptionCommandError("invalid command chunk duration")
+        }
+        guard let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true),
+            let converter = AVAudioConverter(from: file.processingFormat, to: format)
+        else { throw AudioError(description: "unsupported audio format in \(audio.lastPathComponent)") }
+        guard let inputBuffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4096) else {
+            throw TranscriptionCommandError("can't allocate audio conversion buffer")
+        }
         converter.downmix = true
 
         let input = Input(file: file, buffer: inputBuffer)
@@ -68,7 +73,7 @@ enum CommandAudio {
         while true {
             let capacity = AVAudioFrameCount(min(4096, chunkFrames - frames))
             guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else {
-                throw AudioError(description: "can't allocate audio buffer")
+                throw TranscriptionCommandError("can't allocate audio conversion buffer")
             }
             var conversionError: NSError?
             let status = converter.convert(to: buffer, error: &conversionError) { requested, status in
@@ -86,9 +91,11 @@ enum CommandAudio {
                     return nil
                 }
             }
-            if let error = input.error { throw error }
+            if let error = input.error {
+                throw AudioError(description: "can't read \(audio.lastPathComponent): \(error)")
+            }
             if let conversionError { throw conversionError }
-            guard status != .error else { throw AudioError(description: "audio converter failed") }
+            guard status != .error else { throw TranscriptionCommandError("audio converter failed") }
             if buffer.frameLength > 0 {
                 if output == nil {
                     let url = directory.appendingPathComponent("chunk-\(chunks.count).wav")
@@ -101,7 +108,7 @@ enum CommandAudio {
                 if frames == chunkFrames { finishChunk() }
             }
             if status == .endOfStream { break }
-            guard buffer.frameLength > 0 else { throw AudioError(description: "audio converter made no progress") }
+            guard buffer.frameLength > 0 else { throw TranscriptionCommandError("audio converter made no progress") }
         }
         finishChunk()
         guard !chunks.isEmpty else { throw AudioError(description: "audio has no decodable frames") }

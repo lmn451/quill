@@ -2,6 +2,9 @@ import Darwin
 import Foundation
 
 enum CommandProcess {
+    private static let maxStdoutBytes: UInt64 = 16 * 1024 * 1024
+    private static let maxStderrBytes: UInt64 = 4 * 1024 * 1024
+
     static func executable(at path: String) throws -> URL {
         let expanded = (path as NSString).expandingTildeInPath
         guard expanded.hasPrefix("/"), !expanded.contains("\0") else {
@@ -74,20 +77,43 @@ enum CommandProcess {
 
             let deadline = DispatchTime.now().uptimeNanoseconds + UInt64(max(timeout, 0) * 1_000_000_000)
             var status: Int32 = 0
+            var exited = false
             while DispatchTime.now().uptimeNanoseconds < deadline {
-                if try waitForExit(processID, status: &status) { break }
-                usleep(10_000)
-            }
-            if try waitForExit(processID, status: &status) == false {
-                kill(-processID, SIGTERM)
-                let graceDeadline = DispatchTime.now().uptimeNanoseconds + 1_000_000_000
-                while DispatchTime.now().uptimeNanoseconds < graceDeadline {
-                    if try waitForExit(processID, status: &status) { break }
-                    usleep(10_000)
+                if try waitForExit(processID, status: &status) {
+                    exited = true
+                    break
                 }
-                kill(-processID, SIGKILL)
-                while try !waitForExit(processID, status: &status) { usleep(10_000) }
+                let sizes: (stdout: UInt64, stderr: UInt64)
+                do {
+                    sizes = try outputSizes(stdoutURL: stdoutURL, stderrURL: stderrURL)
+                } catch {
+                    terminate(processID, status: &status)
+                    throw error
+                }
+                if let limit = outputLimitExceeded(sizes) {
+                    terminate(processID, status: &status)
+                    let detail = try tail(of: stderrURL)
+                    let fallback = detail.isEmpty ? try tail(of: stdoutURL) : detail
+                    throw TranscriptionCommandError(
+                        "\(executable.lastPathComponent) \(limit)"
+                            + (fallback.isEmpty ? "" : ": \(fallback)")
+                    )
+                }
+                usleep(5_000)
+            }
+            if !exited, try waitForExit(processID, status: &status) { exited = true }
+            if !exited {
+                terminate(processID, status: &status)
                 throw TranscriptionCommandError("\(executable.lastPathComponent) timed out after \(timeout) seconds")
+            }
+            if kill(-processID, 0) == 0 { terminate(processID, status: &status) }
+            let sizes = try outputSizes(stdoutURL: stdoutURL, stderrURL: stderrURL)
+            if let limit = outputLimitExceeded(sizes) {
+                let detail = try tail(of: stderrURL)
+                let fallback = detail.isEmpty ? try tail(of: stdoutURL) : detail
+                throw TranscriptionCommandError(
+                    "\(executable.lastPathComponent) \(limit)" + (fallback.isEmpty ? "" : ": \(fallback)")
+                )
             }
             let signal = status & 0x7f
             let exitStatus = signal == 0 ? (status >> 8) & 0xff : 128 + signal
@@ -101,13 +127,34 @@ enum CommandProcess {
             }
             let reader = try FileHandle(forReadingFrom: stdoutURL)
             defer { try? reader.close() }
-            let maxOutput = 16 * 1024 * 1024
-            let data = try reader.read(upToCount: maxOutput + 1) ?? Data()
-            guard data.count <= maxOutput else {
-                throw TranscriptionCommandError("command JSON output exceeds 16 MiB per chunk")
-            }
-            return data
+            return try reader.read(upToCount: Int(maxStdoutBytes) + 1) ?? Data()
         }
+    }
+
+    private static func outputSizes(stdoutURL: URL, stderrURL: URL) throws -> (stdout: UInt64, stderr: UInt64) {
+        let stdout = try FileManager.default.attributesOfItem(atPath: stdoutURL.path)[.size] as? NSNumber
+        let stderr = try FileManager.default.attributesOfItem(atPath: stderrURL.path)[.size] as? NSNumber
+        guard let stdout, let stderr else {
+            throw TranscriptionCommandError("could not inspect command output files")
+        }
+        return (stdout.uint64Value, stderr.uint64Value)
+    }
+
+    private static func outputLimitExceeded(_ sizes: (stdout: UInt64, stderr: UInt64)) -> String? {
+        if sizes.stdout > maxStdoutBytes { return "stdout exceeds 16 MiB output limit" }
+        if sizes.stderr > maxStderrBytes { return "stderr exceeds 4 MiB output limit" }
+        return nil
+    }
+
+    private static func terminate(_ processID: pid_t, status: inout Int32) {
+        kill(-processID, SIGTERM)
+        let graceDeadline = DispatchTime.now().uptimeNanoseconds + 1_000_000_000
+        while DispatchTime.now().uptimeNanoseconds < graceDeadline {
+            if (try? waitForExit(processID, status: &status)) == true { break }
+            usleep(10_000)
+        }
+        kill(-processID, SIGKILL)
+        while (try? waitForExit(processID, status: &status)) == false { usleep(10_000) }
     }
 
     private static func waitForExit(_ processID: pid_t, status: inout Int32) throws -> Bool {

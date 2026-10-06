@@ -121,6 +121,29 @@ final class TranscriptionAdapterTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(start), 5)
     }
 
+    func testStdoutAndStderrLimitsStopCommandAndDescendants() throws {
+        for stream in ["stdout", "stderr"] {
+            let wrapperPIDFile = root.appendingPathComponent("\(stream)-wrapper.pid")
+            let childPIDFile = root.appendingPathComponent("\(stream)-child.pid")
+            let redirection = stream == "stderr" ? " >&2" : ""
+            let producer = try script(
+                "echo $$ > '\(wrapperPIDFile.path)'\n" +
+                    "/bin/sh -c 'trap \"\" TERM; while :; do :; done' &\n" +
+                    "echo $! > '\(childPIDFile.path)'\n" +
+                    "exec /usr/bin/yes x\(redirection)"
+            )
+            let start = Date()
+            XCTAssertThrowsError(try CommandProcess.run(executable: producer, arguments: [], timeout: 30)) { error in
+                XCTAssertTrue(String(describing: error).contains("\(stream) exceeds"))
+            }
+            XCTAssertLessThan(Date().timeIntervalSince(start), 10)
+            let wrapperPID = try XCTUnwrap(Int32(String(contentsOf: wrapperPIDFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+            let childPID = try XCTUnwrap(Int32(String(contentsOf: childPIDFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+            XCTAssertFalse(processIsRunning(wrapperPID))
+            XCTAssertFalse(processIsRunning(childPID))
+        }
+    }
+
     func testTimeoutKillsWrapperAndChildProcess() throws {
         let childPIDFile = root.appendingPathComponent("child.pid")
         let wrapperPIDFile = root.appendingPathComponent("wrapper.pid")
@@ -130,7 +153,7 @@ final class TranscriptionAdapterTests: XCTestCase {
                 "echo $! > '\(childPIDFile.path)'\n" +
                 "trap '' TERM\nwhile :; do :; done"
         )
-        XCTAssertThrowsError(try CommandProcess.run(executable: hanging, arguments: [], timeout: 0.2))
+        XCTAssertThrowsError(try CommandProcess.run(executable: hanging, arguments: [], timeout: 1))
         let wrapperPID = try XCTUnwrap(Int32(String(contentsOf: wrapperPIDFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
         let childPID = try XCTUnwrap(Int32(String(contentsOf: childPIDFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
         XCTAssertFalse(processIsRunning(wrapperPID))
@@ -215,11 +238,26 @@ final class TranscriptionAdapterTests: XCTestCase {
             let chunks = try CommandAudio.chunks(from: source, in: directory, maxDuration: 1)
             XCTAssertEqual(chunks.count, 2)
             XCTAssertEqual(chunks.map(\.duration), [1, 1])
-            XCTAssertThrowsError(try CommandAudio.chunks(from: root.appendingPathComponent("missing"), in: directory, maxDuration: 1))
+            XCTAssertThrowsError(try CommandAudio.chunks(from: root.appendingPathComponent("missing"), in: directory, maxDuration: 1)) {
+                XCTAssertTrue($0 is CommandAudio.AudioError)
+            }
         }
         let empty = try audio(duration: 0)
         try CommandProcess.withTemporaryDirectory { directory in
-            XCTAssertThrowsError(try CommandAudio.chunks(from: empty, in: directory, maxDuration: 1))
+            XCTAssertThrowsError(try CommandAudio.chunks(from: empty, in: directory, maxDuration: 1)) {
+                XCTAssertTrue($0 is CommandAudio.AudioError)
+            }
+        }
+    }
+
+    func testChunkFileCreationFailureIsNotClassifiedAsBadInputAudio() throws {
+        let source = try audio(duration: 0.5)
+        let blockedDirectory = root.appendingPathComponent("not-a-directory")
+        try Data("block".utf8).write(to: blockedDirectory)
+        XCTAssertThrowsError(
+            try CommandAudio.chunks(from: source, in: blockedDirectory, maxDuration: 1)
+        ) { error in
+            XCTAssertFalse(error is CommandAudio.AudioError)
         }
     }
 
