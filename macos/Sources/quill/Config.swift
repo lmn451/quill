@@ -38,13 +38,8 @@ enum Config {
         transcription()?["enabled"] as? Bool ?? true
     }
 
-    /// Configured engine name. Only "parakeet" ships today; the coordinator
-    /// warns and falls back for anything else.
-    static func transcriptionEngine() -> String {
-        transcription()?["engine"] as? String ?? "parakeet"
-    }
-
-    private static func transcription() -> [String: Any]? {
+    /// Read once when selecting a provider, so its engine and options agree.
+    static func transcription() -> [String: Any]? {
         load()?["transcription"] as? [String: Any]
     }
 
