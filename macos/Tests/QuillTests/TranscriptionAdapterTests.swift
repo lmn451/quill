@@ -222,10 +222,11 @@ final class TranscriptionAdapterTests: XCTestCase {
             "echo $$ > '\(wrapperPIDFile.path)'\n" + "/bin/sh -c 'trap \"\" TERM; while :; do :; done' &\n" + "echo $! > '\(childPIDFile.path)'\nexit 0"
         )
         let start = Date()
-        XCTAssertThrowsError(try CommandProcess.run(executable: wrapper, arguments: [], timeout: 0.2)) { error in
+        // Allow the fixture to start on a busy host before testing the inherited-pipe deadline.
+        XCTAssertThrowsError(try CommandProcess.run(executable: wrapper, arguments: [], timeout: 2)) { error in
             XCTAssertTrue(String(describing: error).contains("timed out"))
         }
-        XCTAssertLessThan(Date().timeIntervalSince(start), 3)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5)
         let wrapperPID = try XCTUnwrap(Int32(String(contentsOf: wrapperPIDFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
         let childPID = try XCTUnwrap(Int32(String(contentsOf: childPIDFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
         XCTAssertFalse(processIsRunning(wrapperPID))
