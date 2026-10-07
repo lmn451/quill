@@ -90,7 +90,9 @@ enum CommandAudio {
             if let error = input.error {
                 throw error
             }
-            if let conversionError { throw conversionError }
+            if let conversionError {
+                throw UnreadableTranscriptionInput.classify(conversionError, audio: audio)
+            }
             guard status != .error else { throw TranscriptionCommandError("audio converter failed") }
             if buffer.frameLength > 0 {
                 if output == nil {

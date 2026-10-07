@@ -339,6 +339,9 @@ final class TranscriptionAdapterTests: XCTestCase {
 
         let resourceError = NSError(domain: AVFoundationErrorDomain, code: AVError.outOfMemory.rawValue)
         XCTAssertFalse(UnreadableTranscriptionInput.classify(resourceError, audio: malformed) is UnreadableTranscriptionInput)
+
+        let decodeError = NSError(domain: AVFoundationErrorDomain, code: AVError.decodeFailed.rawValue)
+        XCTAssertTrue(UnreadableTranscriptionInput.classify(decodeError, audio: malformed) is UnreadableTranscriptionInput)
     }
 
     func testChunkFileCreationFailureIsNotClassifiedAsBadInputAudio() throws {
