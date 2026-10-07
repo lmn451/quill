@@ -224,6 +224,8 @@ enum CommandProcess {
             }
         }
 
+        terminateRemainingGroup(processID)
+
         if let captureError { throw captureError }
         if let overflow {
             let detail = String(decoding: stderr.data, as: UTF8.self)
@@ -281,6 +283,17 @@ enum CommandProcess {
         }
         kill(-processID, SIGKILL)
         while waitpid(processID, &status, 0) < 0 && errno == EINTR {}
+    }
+
+    private static func terminateRemainingGroup(_ processID: pid_t) {
+        guard processID > 1, kill(-processID, 0) == 0 || errno == EPERM else { return }
+        kill(-processID, SIGTERM)
+        let graceDeadline = DispatchTime.now().uptimeNanoseconds + 250_000_000
+        while DispatchTime.now().uptimeNanoseconds < graceDeadline {
+            if kill(-processID, 0) < 0 && errno == ESRCH { return }
+            usleep(10_000)
+        }
+        kill(-processID, SIGKILL)
     }
 
     static func withTemporaryDirectory<T>(_ body: (URL) throws -> T) throws -> T {

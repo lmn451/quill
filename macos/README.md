@@ -191,8 +191,9 @@ Quill's source or adding an inference library dependency.
 - Exit zero and write **one JSON object to stdout** (maximum 16 MiB). Write
   logs/errors to stderr (maximum 4 MiB). Quill drains both streams while the
   process runs; the timeout also covers descendants keeping either stream open.
-  A nonzero exit, output overflow, or timeout fails the job, with a bounded
-  stderr excerpt in `transcribe.log`.
+  Remaining descendants in the command's process group are terminated when it
+  finishes. A nonzero exit, output overflow, or timeout fails the job, with a
+  bounded stderr excerpt in `transcribe.log`.
 - Temporary audio is removed after success or failure. Captured output stays
   in bounded memory buffers and is discarded after the command completes.
   `doctor` verifies the executable; a short test recording is needed to verify

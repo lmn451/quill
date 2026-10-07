@@ -259,6 +259,32 @@ final class TranscriptionAdapterTests: XCTestCase {
         XCTAssertFalse(processIsRunning(childPID))
     }
 
+    func testSuccessfulAndFailingWrappersCleanUpRedirectedChildren() throws {
+        for exitStatus in [0, 7] {
+            let childPIDFile = root.appendingPathComponent("redirected-child-\(exitStatus).pid")
+            let wrapper = try script(
+                "/bin/sh -c 'trap \"\" TERM; while :; do :; done' </dev/null >/dev/null 2>&1 &\n"
+                    + "echo $! > '\(childPIDFile.path)'\n"
+                    + "printf '{\"text\":\"preserved\"}'\n"
+                    + "exit \(exitStatus)"
+            )
+            if exitStatus == 0 {
+                XCTAssertEqual(
+                    try CommandProcess.run(executable: wrapper, arguments: [], timeout: 5),
+                    Data(#"{"text":"preserved"}"#.utf8)
+                )
+            } else {
+                XCTAssertThrowsError(try CommandProcess.run(executable: wrapper, arguments: [], timeout: 5)) { error in
+                    XCTAssertTrue(String(describing: error).contains("status 7"))
+                }
+            }
+            let childPID = try XCTUnwrap(
+                Int32(String(contentsOf: childPIDFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))
+            )
+            XCTAssertFalse(processIsRunning(childPID))
+        }
+    }
+
     func testSegmentJustPastChunkBoundaryRemainsOrderedAndBounded() throws {
         let adapter = try adapter(executable: script("exit 0"))
         let decoded = try adapter.decode(
