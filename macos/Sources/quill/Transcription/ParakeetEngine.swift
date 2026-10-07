@@ -41,7 +41,7 @@ actor ParakeetEngine: TranscriptionEngine {
         } catch let error as UnreadableTranscriptionInput {
             throw error
         } catch {
-            throw UnreadableTranscriptionInput(audio: audio, underlyingError: error)
+            throw UnreadableTranscriptionInput.classify(error, audio: audio)
         }
 
         var state = try TdtDecoderState()

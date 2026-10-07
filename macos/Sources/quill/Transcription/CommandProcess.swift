@@ -100,9 +100,10 @@ enum CommandProcess {
             posix_spawn_file_actions_destroy(&actions)
             posix_spawnattr_destroy(&attributes)
         }
-        let actionError = posix_spawn_file_actions_addopen(
-            &actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0
-        ) | posix_spawn_file_actions_adddup2(&actions, stdoutWrite, STDOUT_FILENO)
+        let actionError =
+            posix_spawn_file_actions_addopen(
+                &actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0
+            ) | posix_spawn_file_actions_adddup2(&actions, stdoutWrite, STDOUT_FILENO)
             | posix_spawn_file_actions_adddup2(&actions, stderrWrite, STDERR_FILENO)
             | posix_spawn_file_actions_addclose(&actions, stdoutRead)
             | posix_spawn_file_actions_addclose(&actions, stderrRead)
@@ -240,7 +241,8 @@ enum CommandProcess {
         guard exitStatus == 0 else {
             let detail = String(decoding: stderr.data, as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let fallback = detail.isEmpty
+            let fallback =
+                detail.isEmpty
                 ? String(decoding: stdout.data.suffix(4096), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
                 : detail
             throw TranscriptionCommandError(
@@ -278,7 +280,7 @@ enum CommandProcess {
             usleep(10_000)
         }
         kill(-processID, SIGKILL)
-        while waitpid(processID, &status, 0) < 0 && errno == EINTR { }
+        while waitpid(processID, &status, 0) < 0 && errno == EINTR {}
     }
 
     static func withTemporaryDirectory<T>(_ body: (URL) throws -> T) throws -> T {

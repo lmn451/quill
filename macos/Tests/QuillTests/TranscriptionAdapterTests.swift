@@ -186,10 +186,8 @@ final class TranscriptionAdapterTests: XCTestCase {
             let childPIDFile = root.appendingPathComponent("\(stream)-child.pid")
             let redirection = stream == "stderr" ? " >&2" : ""
             let producer = try script(
-                "echo $$ > '\(wrapperPIDFile.path)'\n" +
-                    "/bin/sh -c 'trap \"\" TERM; while :; do :; done' &\n" +
-                    "echo $! > '\(childPIDFile.path)'\n" +
-                    "exec /usr/bin/head -c 67108864 /dev/zero\(redirection)"
+                "echo $$ > '\(wrapperPIDFile.path)'\n" + "/bin/sh -c 'trap \"\" TERM; while :; do :; done' &\n" + "echo $! > '\(childPIDFile.path)'\n"
+                    + "exec /usr/bin/head -c 67108864 /dev/zero\(redirection)"
             )
             let start = Date()
             XCTAssertThrowsError(try CommandProcess.run(executable: producer, arguments: [], timeout: 30)) { error in
@@ -207,10 +205,8 @@ final class TranscriptionAdapterTests: XCTestCase {
         let childPIDFile = root.appendingPathComponent("child.pid")
         let wrapperPIDFile = root.appendingPathComponent("wrapper.pid")
         let hanging = try script(
-            "echo $$ > '\(wrapperPIDFile.path)'\n" +
-                "/bin/sh -c 'trap \"\" TERM; while :; do :; done' &\n" +
-                "echo $! > '\(childPIDFile.path)'\n" +
-                "trap '' TERM\nwhile :; do :; done"
+            "echo $$ > '\(wrapperPIDFile.path)'\n" + "/bin/sh -c 'trap \"\" TERM; while :; do :; done' &\n" + "echo $! > '\(childPIDFile.path)'\n"
+                + "trap '' TERM\nwhile :; do :; done"
         )
         XCTAssertThrowsError(try CommandProcess.run(executable: hanging, arguments: [], timeout: 1))
         let wrapperPID = try XCTUnwrap(Int32(String(contentsOf: wrapperPIDFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
@@ -223,9 +219,7 @@ final class TranscriptionAdapterTests: XCTestCase {
         let wrapperPIDFile = root.appendingPathComponent("exit-wrapper.pid")
         let childPIDFile = root.appendingPathComponent("pipe-child.pid")
         let wrapper = try script(
-            "echo $$ > '\(wrapperPIDFile.path)'\n" +
-                "/bin/sh -c 'trap \"\" TERM; while :; do :; done' &\n" +
-                "echo $! > '\(childPIDFile.path)'\nexit 0"
+            "echo $$ > '\(wrapperPIDFile.path)'\n" + "/bin/sh -c 'trap \"\" TERM; while :; do :; done' &\n" + "echo $! > '\(childPIDFile.path)'\nexit 0"
         )
         let start = Date()
         XCTAssertThrowsError(try CommandProcess.run(executable: wrapper, arguments: [], timeout: 0.2)) { error in
@@ -317,7 +311,7 @@ final class TranscriptionAdapterTests: XCTestCase {
             XCTAssertEqual(chunks.count, 2)
             XCTAssertEqual(chunks.map(\.duration), [1, 1])
             XCTAssertThrowsError(try CommandAudio.chunks(from: root.appendingPathComponent("missing"), in: directory, maxDuration: 1)) {
-                XCTAssertTrue($0 is UnreadableTranscriptionInput)
+                XCTAssertFalse($0 is UnreadableTranscriptionInput)
             }
         }
         let empty = try audio(duration: 0)
@@ -326,6 +320,25 @@ final class TranscriptionAdapterTests: XCTestCase {
                 XCTAssertTrue($0 is UnreadableTranscriptionInput)
             }
         }
+    }
+
+    func testMalformedAudioIsSkippableButInfrastructureOpenErrorsAreFatal() throws {
+        let malformed = root.appendingPathComponent("malformed.caf")
+        try Data("not an audio file".utf8).write(to: malformed)
+        try CommandProcess.withTemporaryDirectory { directory in
+            XCTAssertThrowsError(try CommandAudio.chunks(from: malformed, in: directory, maxDuration: 1)) {
+                let error = $0 as NSError
+                XCTAssertTrue($0 is UnreadableTranscriptionInput, "domain=\(error.domain) code=\(error.code) error=\(error)")
+            }
+        }
+
+        let permissionError = NSError(domain: NSOSStatusErrorDomain, code: Int(kAudioFilePermissionsError))
+        let classifiedPermissionError = UnreadableTranscriptionInput.classify(permissionError, audio: malformed)
+        XCTAssertFalse(classifiedPermissionError is UnreadableTranscriptionInput)
+        XCTAssertEqual((classifiedPermissionError as NSError).domain, NSOSStatusErrorDomain)
+
+        let resourceError = NSError(domain: AVFoundationErrorDomain, code: AVError.outOfMemory.rawValue)
+        XCTAssertFalse(UnreadableTranscriptionInput.classify(resourceError, audio: malformed) is UnreadableTranscriptionInput)
     }
 
     func testChunkFileCreationFailureIsNotClassifiedAsBadInputAudio() throws {

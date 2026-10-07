@@ -26,7 +26,7 @@ enum CommandAudio {
         do {
             file = try AVAudioFile(forReading: audio)
         } catch {
-            throw UnreadableTranscriptionInput(description: "can't read \(audio.lastPathComponent): \(error)")
+            throw UnreadableTranscriptionInput.classify(error, audio: audio)
         }
         return try convert(file, source: audio, in: directory, maxDuration: maxDuration)
     }
@@ -82,13 +82,13 @@ enum CommandAudio {
                     status.pointee = input.buffer.frameLength == 0 ? .endOfStream : .haveData
                     return input.buffer.frameLength == 0 ? nil : input.buffer
                 } catch {
-                    input.error = error
+                    input.error = UnreadableTranscriptionInput.classify(error, audio: audio)
                     status.pointee = .endOfStream
                     return nil
                 }
             }
             if let error = input.error {
-                throw UnreadableTranscriptionInput(description: "can't read \(audio.lastPathComponent): \(error)")
+                throw error
             }
             if let conversionError { throw conversionError }
             guard status != .error else { throw TranscriptionCommandError("audio converter failed") }
