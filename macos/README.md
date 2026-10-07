@@ -90,7 +90,7 @@ the tail or an unrecovered stall).
 
 ## Transcription
 
-Built in, on-device, automatic. The default engine is **Parakeet TDT 0.6B v2**
+By default, transcription runs on-device with **Parakeet TDT 0.6B v2**
 (English) via [FluidAudio](https://github.com/FluidInference/FluidAudio)'s
 Core ML port — roughly 20 seconds per hour of audio on Apple Silicon. Models
 (~600 MB) download once on first transcription; `quill doctor` tells you
@@ -102,10 +102,8 @@ share one clock, and merged by timestamp. Jobs run in a serial queue — you can
 start a new recording while the last one transcribes. Unfinished jobs resume
 on next launch (the filesystem is the queue: a session with `meta.json` but no
 `transcript.json` is pending). Failures append to the session's
-`transcribe.log` and never block later jobs.
-
-The engine sits behind a small protocol; a Whisper engine (WhisperKit
-large-v3-turbo) is planned as the fallback / re-transcription option.
+`transcribe.log`, keep the session pending for retry, and never block later
+jobs.
 
 Three provider choices share the same recording queue and transcript format:
 
@@ -115,8 +113,7 @@ Three provider choices share the same recording queue and transcript format:
   wrapper that implements the JSON contract below.
 
 Unknown engines and invalid provider settings fail explicitly. Quill never
-silently substitutes a different model. Command failures leave the session
-pending for a later retry, with details in `transcribe.log`.
+silently substitutes a different model.
 
 ### Handy
 
@@ -275,8 +272,8 @@ quill install --uninstall
   per-process picker if it bothers you).
 - If recordings come out silent, check System Settings → Privacy & Security →
   Screen & System Audio Recording.
-- Parakeet v2 is English-only. Other languages will come with the Whisper
-  engine.
+- Parakeet v2 is English-only; language support depends on the selected
+  provider. Native WhisperKit support is tracked separately in issue #69.
 - The binary embeds its Info.plist (`__TEXT,__info_plist`) so TCC can
   attribute permissions to quill itself when running as a LaunchAgent.
 
