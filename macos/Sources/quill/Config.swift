@@ -40,7 +40,32 @@ enum Config {
 
     /// Read once when selecting a provider, so its engine and options agree.
     static func transcription() throws -> [String: Any]? {
-        try transcription(in: load())
+        try transcription(from: path)
+    }
+
+    static func transcription(from url: URL) throws -> [String: Any]? {
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            let readError = error as NSError
+            if readError.domain == NSCocoaErrorDomain && readError.code == NSFileReadNoSuchFileError { return nil }
+            throw TranscriptionCommandError("cannot read transcription config at \(url.path): \(error)")
+        }
+
+        let config: [String: Any]
+        do {
+            let json = try JSONSerialization.jsonObject(with: data)
+            guard let object = json as? [String: Any] else {
+                throw TranscriptionCommandError("config at \(url.path) must contain a JSON object")
+            }
+            config = object
+        } catch let error as TranscriptionCommandError {
+            throw error
+        } catch {
+            throw TranscriptionCommandError("invalid JSON in config at \(url.path): \(error)")
+        }
+        return try transcription(in: config)
     }
 
     static func transcription(in config: [String: Any]?) throws -> [String: Any]? {

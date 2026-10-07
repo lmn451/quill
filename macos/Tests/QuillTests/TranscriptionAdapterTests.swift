@@ -108,6 +108,32 @@ final class TranscriptionAdapterTests: XCTestCase {
         XCTAssertThrowsError(try Config.transcription(in: ["transcription": "handy"]))
     }
 
+    func testProviderConfigFileDistinguishesMissingFromInvalidAndReadFailures() throws {
+        let missing = root.appendingPathComponent("absent.json")
+        XCTAssertNil(try Config.transcription(from: missing))
+        XCTAssertTrue(try TranscriptionProvider(configuration: Config.transcription(from: missing)).makeEngine() is ParakeetEngine)
+
+        let malformed = root.appendingPathComponent("malformed.json")
+        try Data("{\"transcription\":".utf8).write(to: malformed)
+        XCTAssertThrowsError(try Config.transcription(from: malformed))
+        XCTAssertThrowsError(try TranscriptionProvider(configuration: Config.transcription(from: malformed)))
+
+        let nonObject = root.appendingPathComponent("array.json")
+        try Data("[]".utf8).write(to: nonObject)
+        XCTAssertThrowsError(try Config.transcription(from: nonObject))
+
+        let directory = root.appendingPathComponent("directory.json", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        XCTAssertThrowsError(try Config.transcription(from: directory))
+
+        let handy = root.appendingPathComponent("handy.json")
+        try JSONSerialization.data(withJSONObject: ["transcription": ["engine": "handy", "handy_model": "installed"]])
+            .write(to: handy)
+        let configuration = try XCTUnwrap(Config.transcription(from: handy))
+        XCTAssertEqual(configuration["engine"] as? String, "handy")
+        XCTAssertEqual(configuration["handy_model"] as? String, "installed")
+    }
+
     func testInvalidCommandConfigurationFailsBeforeTranscribing() throws {
         let executable = try script("exit 0")
         for extra: [String: Any] in [
