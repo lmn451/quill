@@ -466,6 +466,36 @@ final class TranscriptionAdapterTests: XCTestCase {
         XCTAssertEqual(transcript.segments.map(\.text), ["recognized system.caf"])
     }
 
+    func testMissingReferencedAudioLeavesSessionPendingAndRetryCompletes() async throws {
+        let missingAudio = root.appendingPathComponent("mic.caf")
+        let laterAudio = root.appendingPathComponent("system.caf")
+        try Data("audio".utf8).write(to: laterAudio)
+        let files = ["mic": missingAudio.lastPathComponent, "system": laterAudio.lastPathComponent]
+        try JSONSerialization.data(withJSONObject: ["files": files]).write(to: root.appendingPathComponent("meta.json"))
+        let engine = InjectedTranscriptionEngine(failure: .runtime("never"))
+        let coordinator = TranscriptionCoordinator(engineFactory: { engine })
+
+        do {
+            try await coordinator.transcribe(root)
+            XCTFail("expected missing referenced audio to fail")
+        } catch let error as TranscriptionCommandError {
+            XCTAssertTrue(error.description.contains(missingAudio.path))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("transcript.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("transcript.md").path))
+
+        try Data("restored audio".utf8).write(to: missingAudio)
+        try await coordinator.transcribe(root)
+
+        let transcribedFiles = await engine.transcribedFiles()
+        XCTAssertEqual(transcribedFiles, ["mic.caf", "system.caf"])
+        let transcript = try JSONDecoder().decode(
+            Transcript.self,
+            from: Data(contentsOf: root.appendingPathComponent("transcript.json"))
+        )
+        XCTAssertEqual(transcript.segments.map(\.text), ["recognized mic.caf", "recognized system.caf"])
+    }
+
     func testProviderFailureLeavesSessionPendingAndRetryPreservesProvenance() async throws {
         let source = try audio(duration: 0.5)
         let metadata: [String: Any] = ["files": ["mic": source.lastPathComponent], "start_offset_ms": ["mic": 250]]

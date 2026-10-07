@@ -119,8 +119,7 @@ actor TranscriptionCoordinator {
         for input in inputs {
             let audio = dir.appendingPathComponent(input.file)
             guard FileManager.default.fileExists(atPath: audio.path) else {
-                log(dir, "skipping missing segment \(input.file)")
-                continue
+                throw TranscriptionCommandError("session audio file is missing: \(audio.path)")
             }
             log(dir, "transcribing \(input.file) (\(engine.name))")
             // One bad segment (empty, truncated) shouldn't cost us the rest —
